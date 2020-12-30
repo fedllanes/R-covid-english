@@ -1,0 +1,231 @@
+---
+title: "Covid-19 in Argentina Analisys"
+author: "Federico Llanes"
+knit: (function(input_file, encoding) { out_dir <- 'docs'; rmarkdown::render(input_file,
+  encoding=encoding, output_file=file.path(dirname(input_file), out_dir, 'index.html'))})
+---
+
+# 1 Objective 
+
+This notebook has an objective to analyze athe information given by Argentinian government on the evolution of the current COVID19 pandemic.
+
+The dataset used can be found at http://datos.salud.gob.ar/dataset/covid-19-casos-registrados-en-la-republica-argentina/archivo/fd657d02-a33a-498b-a91b-2ef1a68b8d16
+
+It is a CSV file containing a row for each individual person that was suspected of having covid.
+
+
+# 2 Loading the data
+
+### 2.1 Loading the libraries we will use.
+
+```{r message=FALSE}
+library(tidyr)
+library(dplyr)
+library(ggplot2)
+library(magrittr)
+library(leaflet)
+library(rgdal)
+```
+ 
+### 2.2 Dataset loading
+
+```{r error=TRUE}
+cases <- read.csv("covidsampled.csv")
+```
+
+# 3 Exploring the dataset
+
+## 3.1 Taking a look at the formatting
+
+```{r error=TRUE}
+glimpse(cases)
+```
+
+# 4 Data cleaning 
+
+Our first step is to clean up the Data.
+
+Some people can be as old as 1000 years old, which is clearly incorrect. We will only consider those 100 years old or younger.
+We will format the date strings into a proper date type.
+We will not consider the cases who were discarded as not having Covid, however we will keep the suspicious cases and treat them as positives.
+
+
+```{r error=TRUE}
+cases <- filter(cases, clasificacion_resumen != "Descartado")
+cases <- filter(cases, edad < 100 )
+cases$fecha_apertura <- as.Date(cases$fecha_apertura, "%Y-%m-%d")
+cases$fecha_fallecimiento <- as.Date(cases$fecha_fallecimiento, "%Y-%m-%d")
+```
+
+# 5 Analysis
+
+## 5.1 Number of cases.
+
+```{r}
+length(cases$fallecido)
+```
+## 5.2 Cases by province.
+
+```{r message=FALSE, warning=FALSE}
+group_by(cases, residencia_provincia_nombre) %>% summarise(total = n()) %>% arrange(desc(total))
+```
+
+```{r message=FALSE, warning=FALSE}
+argentina <- readOGR(dsn = "ARG_adm", layer = "ARG_adm1", use_iconv=TRUE, encoding='UTF-8', stringsAsFactors=FALSE, verbose = FALSE)
+cases_by_province <- group_by(cases, residencia_provincia_nombre) %>% 
+  summarise(total = n()) %>%
+  filter(residencia_provincia_nombre != "SIN ESPECIFICAR") %>% 
+  mutate(NAME_1 = residencia_provincia_nombre) %>% 
+  mutate(NAME_1 = replace(NAME_1, NAME_1=="CABA","Ciudad de Buenos Aires"))
+
+argentina@data <- left_join(argentina@data,cases_by_province, by = c("NAME_1"))
+
+state_popup <- paste0("<strong>Estado: </strong>", 
+                      argentina$NAME_1, 
+                      "<br><strong>Casos: </strong>", 
+                      argentina@data$total)
+
+pal <- colorQuantile("YlGn", NULL, n = 5)
+leaflet(data = argentina) %>%
+  addProviderTiles("CartoDB.Positron") %>%
+  addPolygons(fillColor = ~pal(total), 
+              fillOpacity = 0.8, 
+              color = "#BDBDC3", 
+              weight = 1, 
+              popup = state_popup)
+```
+
+## 5.3 Deaths by province
+
+```{r message=FALSE, warning=FALSE, results='hide'}
+filter(cases, fallecido == "SI") %>%  group_by(residencia_provincia_nombre) %>% summarise(total = n()) %>% arrange(desc(total))
+```
+
+```{r message=FALSE}
+argentina <- readOGR(dsn = "ARG_adm", layer = "ARG_adm1", use_iconv=TRUE, encoding='UTF-8', stringsAsFactors=FALSE, verbose = FALSE)
+cases_by_province <- filter(cases, fallecido == "SI") %>% group_by(residencia_provincia_nombre) %>% 
+  summarise(total = n()) %>%
+  filter(residencia_provincia_nombre != "SIN ESPECIFICAR") %>% 
+  mutate(NAME_1 = residencia_provincia_nombre) %>% 
+  mutate(NAME_1 = replace(NAME_1, NAME_1=="CABA","Ciudad de Buenos Aires"))
+argentina@data <- left_join(argentina@data,cases_by_province, by = c("NAME_1"))
+state_popup <- paste0("<strong>Estado: </strong>", 
+                      argentina$NAME_1, 
+                      "<br><strong> Muertes: </strong>", 
+                      argentina@data$total)
+
+
+pal <- colorQuantile("YlGn", NULL, n = 5)
+leaflet(data = argentina) %>%
+  addProviderTiles("CartoDB.Positron") %>%
+  addPolygons(fillColor = ~pal(total), 
+              fillOpacity = 0.8, 
+              color = "#BDBDC3", 
+              weight = 1, 
+              popup = state_popup)
+```
+
+
+
+## 5.5 Mortality rate
+
+The general mortality rate is given by the amount of people who died of Covid, divided those who got it, in percentage it is.
+
+```{r error=TRUE}
+sum(cases$fallecido == "SI") * 100 / length(cases$fallecido)
+```
+Grouping by gender, we get.
+
+```{r  message= FALSE}
+print.data.frame(group_by(cases, sexo) %>% summarise(mortality = sum(fallecido == "SI") * 100 / length(fallecido)))
+```
+It seems that COVID affects men at a much higher rate than it does women, which may be due to women being just less likely to get covid. In order to confirm this, we will extract how many males and females in this dataset are.
+
+```{r message=FALSE}
+print.data.frame(group_by(cases, sexo) %>% summarise(total = n() ))
+```
+
+Male and females are represented almost equally in the Dataset. Which mean that men are more likely to die than women. There could be many reasons for this, doing some research it may just be that women have stronger immune systems and men are more likely to have comorbidities that make COVID more deadly.
+
+## 5.6 The mortality rate by age
+
+```{r message=FALSE}
+age_mortality <- group_by(cases, edad) %>% summarise(mortality = sum(fallecido == "SI") * 100 / length(fallecido)) 
+r_value = summary(lm(mortality~edad, data = age_mortality))$adj.r.squared
+ggplot(data = age_mortality) + 
+  geom_point(mapping = aes(x = edad , y = mortality)) +
+  geom_smooth(mapping = aes(x = edad , y = mortality)) +
+  labs(y = "Mortality(Percentage)", x = "Age", title = "Mortality by age") +
+  annotate("text", x = 20, y = 50, label = paste("R^2: ",r_value))
+```
+
+As most people already know, the older you are, the more likely you are to die of COVID. Up until age 50, it seems very unlikely but then the mortality jumps almost linearly until reaching almost 40-50% for those 90 and older.
+
+We can divide it into two graphs to see it more clearly.
+
+```{r message=FALSE}
+age_mortality <- filter(cases, edad <50) %>% group_by(edad) %>% summarise(mortality = sum(fallecido == "SI") * 100 / length(fallecido)) 
+r_value = summary(lm(mortality~edad, data = age_mortality))$adj.r.squared
+ggplot(data = age_mortality) + 
+  geom_point(mapping = aes(x = edad , y = mortality)) +
+  geom_smooth(mapping = aes(x = edad , y = mortality)) +
+  labs(y = "Mortality(Percentage)", x = "Age", title = "Mortality by age") +
+  annotate("text", x = 20, y = 1, label = paste("R^2: ",r_value))
+```
+
+```{r message=FALSE}
+age_mortality <- filter(cases, edad > 50) %>% group_by(edad) %>% summarise(mortality = sum(fallecido == "SI") * 100 / length(fallecido)) 
+r_value = summary(lm(mortality~edad, data = age_mortality))$adj.r.squared
+ggplot(data = age_mortality) + 
+  geom_point(mapping = aes(x = edad , y = mortality)) +
+  geom_smooth(mapping = aes(x = edad , y = mortality)) +
+  labs(y = "Mortality(Percentage)", x = "Age", title = "Mortality by age")+
+  annotate("text", x = 60, y = 50, label = paste("R^2: ",r_value))
+```
+
+For this first graph the R^2 is very small, meaning if you're under 50, your age isn't really that import since overall you're not at risk, it probably depends more on whether you have a serious condition that may make you weak to the Virus.
+
+However, if you're over 50, Age becomes a main factor in deciding whether you'll pass it or not.
+
+
+## 5.7 Number of cases per day.
+
+```{r message=FALSE}
+cases_by_day <- group_by(cases, fecha_apertura) %>% summarise(total = n())
+
+ggplot(data = cases_by_day) + 
+  geom_point(mapping = aes(x = fecha_apertura , y = total), na.rm = TRUE) +
+  geom_smooth(method = "loess",mapping = aes(x = fecha_apertura , y = total), na.rm = TRUE,formula = y ~ x) +
+  labs(y = "Date", x = "Total", title = "Cases per day")
+```
+
+After Octobers cases seem to have diminished, even though in October restrictions had dimished. 
+
+## 5.8 Numbers of death per day
+
+
+```{r message=FALSE}
+daily_deaths <- group_by(cases, fecha_apertura) %>% summarise(mortality =n())
+
+ggplot(data = daily_deaths) + 
+  geom_point(mapping = aes(x = fecha_apertura , y = mortality), na.rm = TRUE) +
+  geom_smooth(method = "loess",mapping = aes(x = fecha_apertura , y = mortality), na.rm = TRUE,formula = y ~ x) +
+  labs(y = "Deaths", x = "Date", title = "Deaths per day")
+```
+
+As with cases, the amount of deaths peaked in October and diminished after it.
+
+## 5.9 How many days after being diagnosed did people who die died?
+
+```{r message=FALSE}
+
+mortality_days = filter(cases, fallecido == "SI") %>% mutate(difference = fecha_fallecimiento - fecha_apertura) %>% filter(difference > 0 & difference < 40)  %>% group_by(difference) %>% summarise(total = n()) %>% mutate(ptg = prop.table(total)*100)
+
+ggplot(data = mortality_days) + 
+  geom_point(mapping = aes(x = difference , y = cumsum(ptg))) +
+  labs(y = "Cumulative Percentage", x = "Days after diagnosis", title = "How many days after diagnosis do people who died die?(Cumulative)")
+
+```
+
+
+50% died 10 days after their diagnosis, so it's safe to say most of these people were diagnosed too late. They probably only got to the hospital once they needed hospitalization, meaning they could have been infected for over 10 days.
