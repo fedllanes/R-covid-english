@@ -30,7 +30,7 @@ library(rgdal)
 ### 2.2 Dataset loading
 
 ```{r error=TRUE}
-cases <- read.csv("covidsampled.csv")
+cases <- read.csv("Covid19Casos.csv")
 ```
 
 # 3 Exploring the dataset
@@ -201,18 +201,17 @@ ggplot(data = cases_by_day) +
 
 After Octobers cases seem to have diminished, even though in October restrictions had dimished. 
 
-## 5.8 Numbers of death per day
+## 5.8 Numbers of deaths per day
 
 
 ```{r message=FALSE}
-daily_deaths <- group_by(cases, fecha_apertura) %>% summarise(mortality =n())
+daily_deaths <- filter(cases, fallecido == "SI")  %>% group_by(fecha_apertura) %>% summarise(mortality =n())
 
 ggplot(data = daily_deaths) + 
   geom_point(mapping = aes(x = fecha_apertura , y = mortality), na.rm = TRUE) +
   geom_smooth(method = "loess",mapping = aes(x = fecha_apertura , y = mortality), na.rm = TRUE,formula = y ~ x) +
   labs(y = "Deaths", x = "Date", title = "Deaths per day")
 ```
-
 As with cases, the amount of deaths peaked in October and diminished after it.
 
 ## 5.9 How many days after being diagnosed did people who die died?
@@ -226,6 +225,5 @@ ggplot(data = mortality_days) +
   labs(y = "Cumulative Percentage", x = "Days after diagnosis", title = "How many days after diagnosis do people who died die?(Cumulative)")
 
 ```
-
 
 50% died 10 days after their diagnosis, so it's safe to say most of these people were diagnosed too late. They probably only got to the hospital once they needed hospitalization, meaning they could have been infected for over 10 days.
